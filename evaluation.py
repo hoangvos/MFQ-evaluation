@@ -15,23 +15,28 @@ import pandas as pd
 ''' ------------------------ '''
 #One time simulation for short demonstration
 DEMO = False                 
+SIMULATE = True
 #Multiple simulations to get mean value 
 MULTIPLE_SIMULATION = False
 #Again, multiple simulations for experiments
-EXPERIMENT = True
+EXPERIMENT = False
 # Experiment running for the QUANTUM effect
 EXPERIMENT_QUANTUM_On_FIRST_RESPONSE = False
 ''' ------------------------ '''
 ''' Experiment list          '''
 ''' 2 level only              '''
 ''' ------------------------ '''
-lambda_exp = [0.025, 0.05]
+lambda_exp = [0.025,  0.05]
 mu_exp = [0.1, 0.2]
-quantum_exp = [0.3, 3]
+quantum_queue_1_exp = [0.3, 3]
+quantum_queue_2_exp = [0.4, 5]
+lambda_io_exp = [0.03, 0.07]
+mu_io_exp = [0.4, 0.9]
+io_probalities_exp = [0.1, 0.3]
 ''' ------------------------ '''
 ''' Parameters               '''
 ''' ------------------------ '''
-MAXSIMTIME = 1000000
+MAXSIMTIME = 100000
 LAMBDA = 0.2
 MU = 0.1
 LAMBDA_IO = 0.5
@@ -42,7 +47,7 @@ QUANTUM_QUEUE_2 = 8
 POPULATION = 50000000
 SERVICE_DISCIPLINE = 'RR'
 LOGGED = False 
-VERBOSE = True
+VERBOSE = False
 NSIM = 30
 NUM_CPU = 3
 ''' ------------------------ '''
@@ -99,24 +104,21 @@ def SJF( job ):
 A server
 - env: SimPy environment
 - strat: - FIFO: First In First Out
-         - SJF : Shortest Job First
          - RR: Round-robin
 '''
 class Server:
-    def __init__(self, env, strat = 'RR'):
+    def __init__(self, env):
         self.env = env
         """ Create resources """
         self.cpu = simpy.PreemptiveResource(env, capacity = NUM_CPU)
         """ Create resources """
- 
-        
-        self.strat = strat
         self.queue_1 = []
         self.queue_2 = []
         self.queue_3 = []
         self.io_queue = []
         self.jobServing = 0
-        
+        self.idleTime = 0
+
         self.serversleeping = None
         self.server_io_request = None
         
@@ -171,7 +173,9 @@ class Server:
             '''
             if len(self.queue_1) == 0 and len(self.queue_2) == 0 and len(self.queue_3) == 0:
                 self.serversleeping = env.process( self.waiting( self.env))
+                t1 = self.env.now
                 yield self.serversleeping
+                self.idleTime += self.env.now - t1
             else:
                 ''' 
                 record the number of job in system:
@@ -233,7 +237,7 @@ class Server:
                     self.env.process(self.handle_queue_3(j))
                     yield j.trigger_event_source
     def handle_queue_1(self, job):
-        print("Enter handle 1")
+        #print("Enter handle 1")
         with self.cpu.request(priority = job.priority) as req:
             try:
                 yield req 
@@ -246,8 +250,7 @@ class Server:
                 job.trigger_event_source = simpy.Event(env)
                 current_time = self.env.now
                 self.jobServing += 1
-                if LOGGED:
-                    qlog.write( '%.4f\t%d\t%d\n' % (self.env.now, 1 if len(self.queue_1)>0 else 0, len(self.queue_1)) )
+
                 if job.first_response:
                     self.jobsTotal += 1
                     current_t = self.env.now
@@ -378,7 +381,7 @@ class Server:
     # End handle_queue_1
     
     def handle_queue_2(self, job):    
-        print("Enter handle 2")
+        #print("Enter handle 2")
         with self.cpu.request(priority = job.priority) as req:
             try:
                 yield req 
@@ -391,8 +394,7 @@ class Server:
                 if job.io:
                     self.env.process(self.generate_io(job))
                 self.jobServing += 1
-                if LOGGED:
-                    qlog.write( '%.4f\t%d\t%d\n' % (self.env.now, 1 if len(self.queue_2)>0 else 0, len(self.queue_2)) )
+
                 if job.first_response:
                     self.jobsTotal += 1
                     current_t = self.env.now
@@ -514,7 +516,7 @@ class Server:
                     job.remain_t -= pass_time
                     self.queue_2.append(job)
     def handle_queue_3(self, job):   
-        print("Enter handle 3")
+        #print("Enter handle 3")
         
         with self.cpu.request(priority = job.priority) as req:
             try:
@@ -528,8 +530,7 @@ class Server:
                 self.jobServing += 1
                 if job.io:
                     self.env.process(self.generate_io(job))
-                if LOGGED:
-                    qlog.write( '%.4f\t%d\t%d\n' % (self.env.now, 1 if len(self.queue_3)>0 else 0, len(self.queue_3)) )
+
                 if job.first_response:
                     self.jobsTotal += 1
                     current_t = self.env.now
@@ -763,13 +764,314 @@ class JobGenerator:
 
     def job_log(self, env):
         while True:
-            if (len(self.server.queue_1) + len(self.server.queue_2) + len(self.server.queue_3) + self.server.jobServing) not in self.server.length:
-                self.server.length.append(len(self.server.queue_1) + len(self.server.queue_2) + len(self.server.queue_3) + self.server.jobServing)
-            self.server.job_in_sys_count.append(len(self.server.queue_1) + len(self.server.queue_2) + len(self.server.queue_3) + self.server.jobServing)
+            if (len(self.server.queue_1) + len(self.server.queue_2) + len(self.server.queue_3) + len(self.server.io_queue) + self.server.jobServing) not in self.server.length:
+                self.server.length.append(len(self.server.queue_1) + len(self.server.queue_2) + len(self.server.queue_3) + len(self.server.io_queue) + self.server.jobServing)
+            self.server.job_in_sys_count.append(len(self.server.queue_1) + len(self.server.queue_2) + len(self.server.queue_3) + len(self.server.io_queue) + self.server.jobServing)
             yield env.timeout(1)
-env = simpy.Environment()
-MyServer = Server( env, SERVICE_DISCIPLINE )
-MyJobGenerator = JobGenerator( env, MyServer, POPULATION, LAMBDA, MU, LAMBDA_IO, MU_IO, IO_PROBALITIES)
 
-''' start simulation '''
-env.run( until = 400)
+# env = simpy.Environment()
+# MyServer = Server( env )
+# MyJobGenerator = JobGenerator( env, MyServer, POPULATION, LAMBDA, MU, LAMBDA_IO, MU_IO, IO_PROBALITIES)
+
+# ''' start simulation '''
+# env.run( until = 400)
+
+#######################################
+# LAMBDA A
+# MU B
+# LAMBDA_IO C
+# MU_IO D
+# IO_PROBALITIES E
+# QUANTUM_QUEUE_1 F
+# QUANTUM_QUEUE_2 G
+
+if EXPERIMENT:
+    turnaroundTime_exp = []
+    waiting_exp = []
+    mean_job_exp = []
+    idle_exp = []
+    first_response_exp = []
+    for i in range(8):
+        if i == 0:
+            LAMBDA = lambda_exp[0]
+            MU = mu_exp[0]
+            LAMBDA_IO = lambda_io_exp[0]
+            MU_IO = mu_io_exp[1]
+            IO_PROBALITIES = io_probalities_exp[1]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[1]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[0]
+        elif i == 1:
+            LAMBDA = lambda_exp[1]
+            MU = mu_exp[0]
+            LAMBDA_IO = lambda_io_exp[0]
+            MU_IO = mu_io_exp[0]
+            IO_PROBALITIES = io_probalities_exp[0]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[1]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[1]
+        elif i == 2:
+            LAMBDA = lambda_exp[0]
+            MU = mu_exp[1]
+            LAMBDA_IO = lambda_io_exp[0]
+            MU_IO = mu_io_exp[0]
+            IO_PROBALITIES = io_probalities_exp[1]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[0]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[1]
+        elif i == 3:
+            LAMBDA = lambda_exp[1]
+            MU = mu_exp[1]
+            LAMBDA_IO = lambda_io_exp[0]
+            MU_IO = mu_io_exp[1]
+            IO_PROBALITIES = io_probalities_exp[0]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[0]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[0]
+        elif i == 4:
+            LAMBDA = lambda_exp[0]
+            MU = mu_exp[0]
+            LAMBDA_IO = lambda_io_exp[1]
+            MU_IO = mu_io_exp[1]
+            IO_PROBALITIES = io_probalities_exp[0]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[0]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[1]
+        elif i == 5:
+            LAMBDA = lambda_exp[1]
+            MU = mu_exp[0]
+            LAMBDA_IO = lambda_io_exp[1]
+            MU_IO = mu_io_exp[0]
+            IO_PROBALITIES = io_probalities_exp[1]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[0]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[0]
+        elif i == 6:
+            LAMBDA = lambda_exp[0]
+            MU = mu_exp[1]
+            LAMBDA_IO = lambda_io_exp[1]
+            MU_IO = mu_io_exp[0]
+            IO_PROBALITIES = io_probalities_exp[0]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[1]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[0]
+        elif i == 7:
+            LAMBDA = lambda_exp[1]
+            MU = mu_exp[1]
+            LAMBDA_IO = lambda_io_exp[1]
+            MU_IO = mu_io_exp[1]
+            IO_PROBALITIES = io_probalities_exp[1]
+            QUANTUM_QUEUE_1 = quantum_queue_1_exp[1]
+            QUANTUM_QUEUE_2 = quantum_queue_2_exp[1]
+        meanJobDone = []
+        meanUtilization = []
+        meanWaitingTime = []
+        meanServiceTime = []
+        meanturnaroundTime = []
+        meanSysIdleTime = []
+        meanJobInSystem = []
+        meanFirstResponseTime = []
+        for j in range(NSIM):
+            env = simpy.Environment()
+            MyServer = Server(env)
+            MyJobGenerator = JobGenerator( env, MyServer, POPULATION, LAMBDA, MU, LAMBDA_IO, MU_IO, IO_PROBALITIES)
+            env.run(until=MAXSIMTIME)
+            meanJobDone.append(MyServer.jobsDone)
+            meanUtilization.append(1-MyServer.idleTime/MAXSIMTIME)
+            meanWaitingTime.append(MyServer.waitingTime/MyServer.jobsDone)
+            meanServiceTime.append(MyServer.serviceTime/MyServer.jobsDone)
+            meanturnaroundTime.append(MyServer.turnaroundTime/MyServer.jobsDone)
+            meanSysIdleTime.append(MyServer.idleTime)
+            last = (len(MyServer.queue_1) + len(MyServer.queue_2) + len(MyServer.queue_3) + len(MyServer.io_queue))*(MAXSIMTIME-MyServer.jobsInSysCount_t[-1])
+            meanJobInSystem.append((sum(MyServer.numJobsWithTimes)+last)/MAXSIMTIME)
+            meanFirstResponseTime.append(MyServer.first_responsetime/MyServer.jobsTotal)
+        mean_job_res = sum(meanJobDone)/NSIM
+        utilization_res = sum(meanUtilization)/NSIM
+        idle_exp.append(1 - utilization_res)
+        waiting_res = sum(meanWaitingTime)/NSIM
+        waiting_exp.append(waiting_res)
+        response_res = sum(meanturnaroundTime)/NSIM
+        turnaroundTime_exp.append(response_res)
+        meanJobInSys = sum(meanJobInSystem)/NSIM
+        mean_job_exp.append(meanJobInSys)
+        
+        first_response_res = sum(meanFirstResponseTime)/NSIM
+        first_response_exp.append(first_response_res)
+    A = np.array([[1.,-1., -1.,  -1., 1.,  1.,  1., -1.],
+                [1., 1., -1. , -1., -1., -1.,  1.,  1.],
+                [1., -1.,  1., -1., -1.,  1., -1.,  1.],
+                [1.,  1.,  1.,  -1., 1., -1., -1., -1.],
+                [1., -1., -1.,  1.,  1., -1., -1.,  1.],
+                [1., 1., -1., 1.,  -1.,  1., -1., -1.],
+                [1., -1.,  1., 1.,  -1., -1.,  1., -1.],
+                [1., 1.,  1.,  1.,  1.,  1.,  1.,  1.]])
+    B = np.linalg.inv(A)
+    turnaroundTime_index = B.dot(turnaroundTime_exp)
+    waiting_index = B.dot(waiting_exp)
+    mean_job_index = B.dot(mean_job_exp)
+    idle_index = B.dot(idle_exp)
+
+    first_response_index = B.dot(first_response_exp)
+
+    print("\nTurnaround time index and impact solution from result of experiments")
+    impact = []
+    variation = []
+    mean_turnaround = sum(turnaroundTime_exp)/8
+    SST = sum([(i - mean_turnaround)*(i - mean_turnaround) for i in turnaroundTime_exp])
+    variation.append(0)
+    for i in range(1, len(turnaroundTime_index)):
+        variation.append(8*turnaroundTime_index[i]* turnaroundTime_index[i])
+    variation.append(SST)
+    for i in variation:
+        impact.append(i/SST)
+    turnaroundTime_index = append(turnaroundTime_index,1)
+
+    pd1 = pd.DataFrame({'I':A[:,0],'A':A[:,1],'B':A[:,2],'C':A[:,3],'D':A[:,4],'E':A[:,5],'F':A[:,6],'G':A[:,7],'Response Time':turnaroundTime_exp})
+    pd1.loc[len(pd1)] = turnaroundTime_index
+    pd1.loc[len(pd1)] = variation
+    pd1.loc[len(pd1)] = impact
+    pd1 = pd1.round({'I':2,'A':2,'B':2,'C':2,'D':2,'E':2,'F':2,'G':2,'Response Time':2})
+    pd1 = pd1.rename(index={8: 'Index',9: 'Variation', 10:'Fraction'})
+    print(pd1)    
+
+    print("\nFirst Response time index and impact solution from result of experiments")
+
+    impact = []
+    variation = []
+    mean_first_response = sum(first_response_exp)/8
+    SST = sum([(i - mean_first_response)*(i - mean_first_response) for i in first_response_exp])
+    variation.append(0)
+    for i in range(1, len(first_response_index)):
+        variation.append(8*first_response_index[i]* first_response_index[i])
+    variation.append(SST)
+    for i in variation:
+        impact.append(i/SST)
+    first_response_index = append(first_response_index,1)
+
+    pd1 = pd.DataFrame({'I':A[:,0],'A':A[:,1],'B':A[:,2],'C':A[:,3],'D':A[:,4],'E':A[:,5],'F':A[:,6],'G':A[:,7],'First Response Time':first_response_exp})
+    pd1.loc[len(pd1)] = first_response_index
+    pd1.loc[len(pd1)] = variation
+    pd1.loc[len(pd1)] = impact
+    pd1 = pd1.round({'I':2,'A':2,'B':2,'C':2,'D':2,'E':2,'F':2,'G':2,'First Response Time':2})
+    pd1 = pd1.rename(index={8: 'Index',9: 'Variation', 10:'Fraction'})
+    print(pd1)
+
+
+    print("\n\nWaiting time index and impact solution from result of experiments")
+    impact = []
+    variation = []
+    mean_waiting = sum(waiting_exp)/8
+    SST = sum([(i - mean_waiting)*(i - mean_waiting) for i in waiting_exp])
+    variation.append(0)
+    for i in range(1, len(waiting_index)):
+        variation.append(8*waiting_index[i]* waiting_index[i])
+    variation.append(SST)
+    for i in variation:
+        impact.append(i/SST)
+    waiting_index = append(waiting_index,1)
+    
+    pd1 = pd.DataFrame({'I':A[:,0],'A':A[:,1],'B':A[:,2],'C':A[:,3],'D':A[:,4],'E':A[:,5],'F':A[:,6],'G':A[:,7],'Waiting Time':waiting_exp})
+    pd1.loc[len(pd1)] = waiting_index
+    pd1.loc[len(pd1)] = variation
+    pd1.loc[len(pd1)] = impact
+    pd1 = pd1.round({'I':2,'A':2,'B':2,'C':2,'D':2,'E':2,'F':2,'G':2,'Waiting Time':2})
+    pd1 = pd1.rename(index={8: 'Index',9: 'Variation', 10:'Fraction'})
+    print(pd1)
+
+    print("\n\nMean job index and impact solution from result of experiments")
+    impact = []
+    variation = []
+    mean_job = sum(mean_job_exp)/8
+    SST = sum([(i - mean_job)*(i - mean_job) for i in mean_job_exp])
+    variation.append(0)
+    for i in range(1, len(mean_job_index)):
+        variation.append(8*mean_job_index[i]* mean_job_index[i])
+    variation.append(SST)
+    for i in variation:
+        impact.append(i/SST)
+    mean_job_index = append(mean_job_index,1)
+
+    pd1 = pd.DataFrame({'I':A[:,0],'A':A[:,1],'B':A[:,2],'C':A[:,3],'D':A[:,4],'E':A[:,5],'F':A[:,6],'G':A[:,7],'Mean Job':mean_job_exp})
+    pd1.loc[len(pd1)] = mean_job_index
+    pd1.loc[len(pd1)] = variation
+    pd1.loc[len(pd1)] = impact
+    pd1 = pd1.round({'I':2,'A':2,'B':2,'C':2,'D':2,'E':2,'F':2,'G':2,'Mean Job':2})
+    pd1 = pd1.rename(index={8: 'Index',9: 'Variation', 10:'Fraction'})
+    print(pd1)
+
+
+    print("\n\nIdle Time index and impact solution from result of experiments")
+    impact = []
+    variation = []
+    mean_idle = sum(idle_exp)/8
+    SST = sum([(i - mean_idle)*(i - mean_idle) for i in idle_exp])
+    variation.append(0)
+    for i in range(1, len(idle_index)):
+        variation.append(8*idle_index[i]* idle_index[i])
+    variation.append(SST)
+    for i in variation:
+        impact.append(i/SST)
+    idle_index = append(idle_index,1)
+    pd1 = pd.DataFrame({'I':A[:,0],'A':A[:,1],'B':A[:,2],'C':A[:,3],'D':A[:,4],'E':A[:,5],'F':A[:,6],'G':A[:,7],'Idle Time':idle_exp})
+    pd1.loc[len(pd1)] = idle_index
+    pd1.loc[len(pd1)] = variation
+    pd1.loc[len(pd1)] = impact
+    pd1 = pd1.round({'I':2,'A':2,'B':2,'C':2,'D':2,'E':2,'F':2,'G':2,'Idle Time':2})
+    pd1 = pd1.rename(index={8: 'Index',9: 'Variation', 10:'Fraction'})
+    print(pd1)
+
+if SIMULATE:
+    ''' start SimPy environment '''
+    env = simpy.Environment()
+    MyServer = Server( env)
+    MyJobGenerator = JobGenerator( env, MyServer, POPULATION, LAMBDA, MU, LAMBDA_IO, MU_IO, IO_PROBALITIES)
+
+    ''' start simulation '''
+    env.run( until = MAXSIMTIME )
+
+    ''' print statistics '''
+    RHO = LAMBDA/MU
+    print('Job Done:                                    : {0:d}' .format(MyServer.jobsDone))               
+    print('Utilization                                  : {0:.2f}/{1:.2f}' .format(1-MyServer.idleTime/MAXSIMTIME,RHO))
+    try:
+        print('Mean waiting time                            : {0:.2f}'.format(MyServer.waitingTime/MyServer.jobsDone))
+    except ZeroDivisionError:
+        print('No job has been done')
+    try:
+        print('Mean service time                            : {0:.2f}'.format(MyServer.serviceTime/MyServer.jobsDone))
+    except ZeroDivisionError:
+        print('No job has been done')
+    try:
+        print('Turn around time                           : {0:.2f}'.format(MyServer.turnaroundTime/MyServer.jobsDone))
+    except ZeroDivisionError:
+        print('No job has been done')
+    try:
+        print('Mean first response time                     : {0:.2f}'.format(MyServer.first_responsetime/MyServer.jobsTotal))
+    except ZeroDivisionError:
+        print('No job has been done')
+    print('System idle time                             : {0:.2f}' .format(MyServer.idleTime))
+    try:
+        last = (len(MyServer.queue_1) + len(MyServer.queue_2) + len(MyServer.queue_3) + len(MyServer.io_queue))*(MAXSIMTIME-MyServer.jobsInSysCount_t[-1])
+        mean_job_in_sys = (sum(MyServer.numJobsWithTimes)+last)/MAXSIMTIME
+        print('Mean job in system                           : {0:.2f}' .format(mean_job_in_sys))
+    except ZeroDivisionError:
+        print('No job has been done')
+    print('Variance of job in system                    : {0:.4f}' .format(float(statistics.variance(MyServer.jobsInSysCount))))
+    sd = float(statistics.stdev(MyServer.jobsInSysCount))
+    print('Standard deviation of job in system          : {0:.4f}' .format(sd)) 
+    ''' With the confidence level value z = 1.96 (95%)'''
+    num_observe = len(MyServer.numJobsWithTimes) + 1
+    print('Confidence interval of mean job in the system: [{0:.4f}, {1:.4f}]' .format( mean_job_in_sys - 1.96*sd/sqrt(num_observe), mean_job_in_sys + 1.96*sd/sqrt(num_observe) ))
+
+    ''' Graphs plotting '''
+    fig, plt1 = plt.subplots(1)
+    plt1.set_title("Number of jobs in system overtime")
+    plt1.set(xlabel='Time', ylabel='Jobs')
+    plt1.plot(MyServer.jobsInSysCount_t, MyServer.jobsInSysCount)
+
+    plt1.vlines(0, plt.ylim()[0], plt.ylim()[1], linestyles='dashed')
+    plt.show()
+
+
+
+
+
+
+
+
+
+
+        
